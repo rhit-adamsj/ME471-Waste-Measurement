@@ -1,10 +1,11 @@
-#include <DS2321.h>
+#include <DS3231.h>
 #include <Wire.h>
 
 DS3231 myRTC;
 
 void setup() {
   // put your setup code here, to run once:
+  myRTC.setClockMode(false);
   
 }
 
