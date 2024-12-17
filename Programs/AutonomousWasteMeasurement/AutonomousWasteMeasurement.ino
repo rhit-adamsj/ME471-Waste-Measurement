@@ -1,7 +1,7 @@
 #include <DS3231.h>
 #include <Wire.h>
 
-int cellOne; cellTwo; cellThree; cellFour; totalLoad;
+int cellOne; int cellTwo; int cellThree; int cellFour; int totalLoad;
 
 DS3231 myRTC;
 
@@ -18,12 +18,19 @@ void loop() {
   cellThree = calculateLoad(digitalRead(8));
   cellFour = calculateLoad(digitalRead(9));
   totalLoad = cellOne + cellTwo + cellThree + cellFour;
+
+  // SMCR: Sleep mode control register
+  SMCR |= _BV(SE);  // Enables sleep mode
+  SMCR |= _BV(SM2); // Configures sleep mode
+  SMCR |= _BV(SM1);
+  SMCR |= _BV(SM0);
+
+  PRR0 = 0; // Power reduction register 0
+  PRR1 = 0; // Power reduction register 1
 }
 
-int calculateLoad() {
-  int load;
-
-
+int calculateLoad(int digitalIn) {
+  int load = 0;
 
   return load;
 }
