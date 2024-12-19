@@ -9,6 +9,8 @@ byte hour; byte minute; byte second;
 byte tempC;
 bool century; bool h12Flag; bool pmFlag;
 
+float VCC = 9;
+
 void setup() {
   // Start the serial port
     Serial.begin(57600);
@@ -32,8 +34,9 @@ void loop() {
 
   PRR0 = 0; // Power reduction register 0
   PRR1 = 0; // Power reduction register 1*/
-  int V0 = analogRead(0); 
-  Serial.println(V0);
+  int V0 = analogRead(0);
+  int V1 = analogRead(1);
+  Serial.print(V1); Serial.println(V0);
   getRTCValues();
   Serial.print("Time: "); Serial.print(dOW + ", ");
   Serial.print(month); Serial.print("/"); Serial.print(date); Serial.print("/"); Serial.print(year); Serial.print(" ");
