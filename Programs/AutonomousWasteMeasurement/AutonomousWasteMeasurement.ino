@@ -1,7 +1,9 @@
+#include <LiquidCrystal.h>
+#include <HX711.h>
 #include <DS3231.h>
 #include <Wire.h>
 
-int cellOne; int cellTwo; int cellThree; int cellFour; int totalLoad;
+int totalLoad;
 
 DS3231 myRTC;
 byte year; byte month; byte date; byte nDoW; String dOW;
@@ -9,34 +11,51 @@ byte hour; byte minute; byte second;
 byte tempC;
 bool century; bool h12Flag; bool pmFlag;
 
-float VCC = 9;
+HX711 cell1; 
+const int LOADCELL1_DOUT_PIN = 4;
+HX711 cell2;
+const int LOADCELL2_DOUT_PIN = 5;
+HX711 cell3;
+const int LOADCELL3_DOUT_PIN = 6;
+HX711 cell4;
+const int LOADCELL4_DOUT_PIN = 7;
+const int LOADCELL_SCK_PIN = 3;
+
+LiquidCrystal lcd(13, 12, 11, 10, 9, 8);
 
 void setup() {
   // Start the serial port
-    Serial.begin(57600);
+  Serial.begin(57600);
     
   // Start the I2C interface
   Wire.begin();
+
+  cell1.begin(LOADCELL1_DOUT_PIN, LOADCELL_SCK_PIN);
+  cell2.begin(LOADCELL2_DOUT_PIN, LOADCELL_SCK_PIN);
+  cell3.begin(LOADCELL3_DOUT_PIN, LOADCELL_SCK_PIN);
+  cell4.begin(LOADCELL4_DOUT_PIN, LOADCELL_SCK_PIN);
+
+  cell1.set_scale(2000.f);
+  cell1.tare();
+  cell2.set_scale(2000.f);
+  cell2.tare();
+  cell3.set_scale(2000.f);
+  cell3.tare();
+  cell4.set_scale(2000.f);
+  cell4.tare();
 }
 
 void loop() {
-  /*cellOne = calculateLoad(digitalRead(6));
-  cellTwo = calculateLoad(digitalRead(7));
-  cellThree = calculateLoad(digitalRead(8));
-  cellFour = calculateLoad(digitalRead(9));
-  totalLoad = cellOne + cellTwo + cellThree + cellFour;
+  calculateLoad(cell1);
+  calculateLoad(cell2);
+  calculateLoad(cell3);
+  calculateLoad(cell4);
 
-  // SMCR: Sleep mode control register
-  SMCR |= _BV(SE);  // Enables sleep mode
-  SMCR |= _BV(SM2); // Configures sleep mode
-  SMCR |= _BV(SM1);
-  SMCR |= _BV(SM0);
+  cell1.power_down();
+  cell2.power_down();
+  cell3.power_down();
+  cell4.power_down();
 
-  PRR0 = 0; // Power reduction register 0
-  PRR1 = 0; // Power reduction register 1*/
-  int V0 = analogRead(0);
-  int V1 = analogRead(1);
-  Serial.print(V1); Serial.println(V0);
   getRTCValues();
   Serial.print("Time: "); Serial.print(dOW + ", ");
   Serial.print(month); Serial.print("/"); Serial.print(date); Serial.print("/"); Serial.print(year); Serial.print(" ");
@@ -45,10 +64,12 @@ void loop() {
   delay(5000);
 }
 
-int calculateLoad(int digitalIn) {
-  int load = 0;
-
-  return load;
+int calculateLoad(HX711 scale) {
+  Serial.print("one reading:\t");
+  Serial.print(scale.get_units(), 1);
+  Serial.print("\t| average:\t");
+  Serial.println(scale.get_units(10), 1);
+  return scale.get_units();
 }
 
 void getRTCValues() {
@@ -78,10 +99,23 @@ void getRTCValues() {
     case 7:
       dOW = "Saturday";
       break;
-
   }
   hour = myRTC.getHour(h12Flag, pmFlag);
   minute = myRTC.getMinute();
   second = myRTC.getSecond();
   tempC = myRTC.getTemperature();
+}
+
+void updateLCD(){
+  lcd.setCursor(0, 1);
+  lcd.print("");
+  lcd.print(totalLoad); 
+  lcd.print(" lbs");
+
+  lcd.setCursor(0, 2);
+  lcd.print("");
+  lcd.print("Time: ");
+  lcd.print(hour);
+  lcd.print(":");
+  lcd.print(minute);
 }
