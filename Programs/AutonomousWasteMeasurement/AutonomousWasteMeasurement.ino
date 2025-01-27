@@ -3,7 +3,7 @@
 #include <DS3231.h>
 #include <Wire.h>
 
-int totalLoad;
+float load1; float load2; float load3; float load4; float totalLoad;
 
 DS3231 myRTC;
 byte year; byte month; byte date; byte nDoW; String dOW;
@@ -43,13 +43,17 @@ void setup() {
   cell3.tare();
   cell4.set_scale(2000.f);
   cell4.tare();
+
+  lcd.begin(16, 2);
 }
 
 void loop() {
-  calculateLoad(cell1);
-  calculateLoad(cell2);
-  calculateLoad(cell3);
-  calculateLoad(cell4);
+  load1 = calculateLoad(cell1);
+  load2 = calculateLoad(cell2);
+  load3 = calculateLoad(cell3);
+  load4 = calculateLoad(cell4);
+
+  totalLoad = load1+load2+load3+load4;
 
   cell1.power_down();
   cell2.power_down();
@@ -61,14 +65,20 @@ void loop() {
   Serial.print(month); Serial.print("/"); Serial.print(date); Serial.print("/"); Serial.print(year); Serial.print(" ");
   Serial.print(hour); Serial.print(":"); Serial.print(minute); Serial.print(":"); Serial.print(second);
   Serial.println();
-  delay(5000);
+  Serial.print("Total load = "); Serial.print(totalLoad); Serial.println(" lbs");
+  updateLCD();
+  delay(1000);
+  cell1.power_up();
+  cell2.power_up();
+  cell3.power_up();
+  cell4.power_up();
 }
 
-int calculateLoad(HX711 scale) {
-  Serial.print("one reading:\t");
+float calculateLoad(HX711 scale) {
+  /*Serial.print("one reading:\t");
   Serial.print(scale.get_units(), 1);
   Serial.print("\t| average:\t");
-  Serial.println(scale.get_units(10), 1);
+  Serial.println(scale.get_units(10), 1);*/
   return scale.get_units();
 }
 
@@ -107,15 +117,16 @@ void getRTCValues() {
 }
 
 void updateLCD(){
-  lcd.setCursor(0, 1);
-  lcd.print("");
+  lcd.setCursor(0, 0);
   lcd.print(totalLoad); 
-  lcd.print(" lbs");
+  lcd.print(" lbs    ");
 
-  lcd.setCursor(0, 2);
-  lcd.print("");
-  lcd.print("Time: ");
-  lcd.print(hour);
-  lcd.print(":");
-  lcd.print(minute);
+  lcd.setCursor(0, 1);
+  lcd.print(month); lcd.print("/"); 
+  lcd.print(date); lcd.print("/"); 
+  lcd.print(year); lcd.print(" ");
+  lcd.print(hour); lcd.print(":"); 
+  lcd.print(minute/10); lcd.print(minute%10); lcd.print(":");
+  lcd.print(second/10); lcd.print(second%10);
+  lcd.print("   ");
 }
