@@ -45,6 +45,13 @@ void setup() {
   cell4.tare();
 
   lcd.begin(16, 2);
+
+  // Disable Analog Comparator
+  ACSR |= _BV(ACD);
+
+  // Disable ADC and 
+  ADCSRA &= ~_BV(ADEN);
+  PRR1 |= _BV(PRADC);
 }
 
 void loop() {
@@ -72,6 +79,10 @@ void loop() {
   cell2.power_up();
   cell3.power_up();
   cell4.power_up();
+
+  SMCR |= _BV(SM2);
+  SMCR |= _BV(SM1);
+  SMCR |= _BV(SM0);
 }
 
 float calculateLoad(HX711 scale) {
