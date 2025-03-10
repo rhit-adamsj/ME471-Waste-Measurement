@@ -12,14 +12,18 @@ byte tempC;
 bool century; bool h12Flag; bool pmFlag;
 
 HX711 cell1; 
+const int LOADCELL1_SCK_PIN = 24;
 const int LOADCELL1_DOUT_PIN = 4;
 HX711 cell2;
+const int LOADCELL2_SCK_PIN = 25;
 const int LOADCELL2_DOUT_PIN = 5;
 HX711 cell3;
+const int LOADCELL3_SCK_PIN = 26;
 const int LOADCELL3_DOUT_PIN = 6;
 HX711 cell4;
+const int LOADCELL4_SCK_PIN = 27;
 const int LOADCELL4_DOUT_PIN = 7;
-const int LOADCELL_SCK_PIN = 3;
+
 
 LiquidCrystal lcd(13, 12, 11, 10, 9, 8);
 
@@ -30,16 +34,18 @@ void setup() {
   // Start the I2C interface
   Wire.begin();
 
-  cell1.begin(LOADCELL1_DOUT_PIN, LOADCELL_SCK_PIN);
-  cell2.begin(LOADCELL2_DOUT_PIN, LOADCELL_SCK_PIN);
-  cell3.begin(LOADCELL3_DOUT_PIN, LOADCELL_SCK_PIN);
-  cell4.begin(LOADCELL4_DOUT_PIN, LOADCELL_SCK_PIN);
+  // Attach load cells to their respective input pins
+  cell1.begin(LOADCELL1_DOUT_PIN, LOADCELL1_SCK_PIN);
+  cell2.begin(LOADCELL2_DOUT_PIN, LOADCELL2_SCK_PIN);
+  cell3.begin(LOADCELL3_DOUT_PIN, LOADCELL3_SCK_PIN);
+  cell4.begin(LOADCELL4_DOUT_PIN, LOADCELL4_SCK_PIN);
 
+  // Apply scaling factor and zero each load cell
   cell1.set_scale(2000.f);
   cell1.tare();
   cell2.set_scale(2000.f);
   cell2.tare();
-  cell3.set_scale(2000.f);
+  cell3.set_scale(4000.f);
   cell3.tare();
   cell4.set_scale(2000.f);
   cell4.tare();
@@ -47,18 +53,22 @@ void setup() {
   lcd.begin(16, 2);
 
   // Disable Analog Comparator
-  ACSR |= _BV(ACD);
+  // ACSR |= _BV(ACD);
 
-  // Disable ADC and 
-  ADCSRA &= ~_BV(ADEN);
-  PRR1 |= _BV(PRADC);
+  // Disable ADC via and set corresponding power reduction mode
+  // ADCSRA &= ~_BV(ADEN);
+  // PRR1 |= _BV(PRADC);
 }
 
 void loop() {
   load1 = calculateLoad(cell1);
+  Serial.println(load1);
   load2 = calculateLoad(cell2);
+  Serial.println(load2);
   load3 = calculateLoad(cell3);
+  Serial.println(load3);
   load4 = calculateLoad(cell4);
+  Serial.println(load4);
 
   totalLoad = load1+load2+load3+load4;
 
@@ -80,18 +90,18 @@ void loop() {
   cell3.power_up();
   cell4.power_up();
 
-  SMCR |= _BV(SM2);
-  SMCR |= _BV(SM1);
-  SMCR |= _BV(SM0);
+  // SMCR |= _BV(SM2);
+  // SMCR |= _BV(SM1);
+  // SMCR |= _BV(SM0);
 }
 
-float calculateLoad(HX711 scale) {
+float calculateLoad(HX711 cell) {
   /*Serial.print("one reading:\t");
   Serial.print(scale.get_units(), 1);
   Serial.print("\t| average:\t");
   Serial.println(scale.get_units(10), 1);*/
-  return scale.get_units();
-}
+  return cell.get_units();
+  }
 
 void getRTCValues() {
   year = myRTC.getYear();
