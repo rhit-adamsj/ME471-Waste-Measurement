@@ -3,13 +3,27 @@
 #include <DS3231.h>
 #include <Wire.h>
 
-float load1; float load2; float load3; float load4; float totalLoad;
+float load1; float load2; float load3; float load4; float currentLoad;
 
 DS3231 myRTC;
 byte year; byte month; byte date; byte nDoW; String dOW;
 byte hour; byte minute; byte second;
 byte tempC;
 bool century; bool h12Flag; bool pmFlag;
+
+// Variables for use in method parameter lists
+byte alarmDay;
+byte alarmHour;
+byte alarmMinute;
+byte alarmSecond;
+byte alarmBits;
+bool alarmDayIsDay;
+bool alarmH12;
+bool alarmPM;
+
+float prevLoad;
+bool unloaded = false;
+volatile bool alarmFlag = false;
 
 HX711 cell1; 
 const int LOADCELL1_SCK_PIN = 24;
@@ -23,7 +37,6 @@ const int LOADCELL3_DOUT_PIN = 6;
 HX711 cell4;
 const int LOADCELL4_SCK_PIN = 27;
 const int LOADCELL4_DOUT_PIN = 7;
-
 
 LiquidCrystal lcd(13, 12, 11, 10, 9, 8);
 
@@ -45,7 +58,7 @@ void setup() {
   cell1.tare();
   cell2.set_scale(2000.f);
   cell2.tare();
-  cell3.set_scale(4000.f);
+  cell3.set_scale(2000.f);
   cell3.tare();
   cell4.set_scale(2000.f);
   cell4.tare();
@@ -70,19 +83,25 @@ void loop() {
   load4 = calculateLoad(cell4);
   Serial.println(load4);
 
-  totalLoad = load1+load2+load3+load4;
+  currentLoad = load1+load2+load3+load4;
 
   cell1.power_down();
   cell2.power_down();
   cell3.power_down();
   cell4.power_down();
 
+  /*if (currentLoad - prevLoad)/prevLoad < -0.5 {
+    // If relative change in weight shows more than a 50% decrease from last measurement, do things
+    unloaded = true;
+    
+  }*/
+
   getRTCValues();
   Serial.print("Time: "); Serial.print(dOW + ", ");
   Serial.print(month); Serial.print("/"); Serial.print(date); Serial.print("/"); Serial.print(year); Serial.print(" ");
   Serial.print(hour); Serial.print(":"); Serial.print(minute); Serial.print(":"); Serial.print(second);
   Serial.println();
-  Serial.print("Total load = "); Serial.print(totalLoad); Serial.println(" lbs");
+  Serial.print("Total load = "); Serial.print(currentLoad); Serial.println(" lbs");
   updateLCD();
   delay(1000);
   cell1.power_up();
@@ -90,9 +109,59 @@ void loop() {
   cell3.power_up();
   cell4.power_up();
 
-  // SMCR |= _BV(SM2);
-  // SMCR |= _BV(SM1);
-  // SMCR |= _BV(SM0);
+  if alarmFlag {
+    // capture the time the alarm occurred
+    DateTime alarmTime = RTClib::now();
+    // disable Alarm 2 interrupt output
+    myRTC.turnOffAlarm(2);
+
+    // We need to clear both of the alarm flags
+    // before DS3231 can output another alarm interrupt.
+
+    // Capture Alarm 1 flag for later assessment
+    // and automatically clear Alarm 1 flag
+    bool alarm1Flag = myRTC.checkIfAlarm(1);
+
+    // Clear Alarm 2 flag. No need to retain its value.
+    myRTC.checkIfAlarm(2);
+
+    // prepare parameter values for setting a new alarm time
+    alarmBits = 0b01100000; // Alarm 2 when minutes match
+    alarmH12 = false; // interpret hour in 24-hour mode
+    alarmPM = false; // irrelevant in 24-hour mode, but it needs a value
+    alarmIsDay = false; // interpret "day" value as a date in the month
+
+    // add 600 seconds (10 minutes)
+    uint32_t nextAlarm = alarmTime.unixtime() + 600;
+    // update values in the DateTime
+    alarmTime = DateTime(nextAlarm);
+
+    // Set the next time for Alarm 2.
+    // Note that only the "minutes" value is significant,
+    // yet we must supply the day and hour also,
+    // and it does no harm to supply real ones.
+
+    myRTC.setA2Time (
+    // get these values from the DateTime object
+    alarmTime.day(), // from a DateTime, will be date of the month
+    alarmTime.hour(), // from a DateTime, will be in 24-hour format
+    alarmTime.minute(),
+    // these were assigned, above, by the program
+    alarmBits,
+    alarmIsDay,
+    alarmH12,
+    alarmPM
+    );
+
+    // enable Alarm 2 interrupt output
+    myRTC.turnOnAlarm(2);
+  }
+
+  void sleepFunction();
+}
+
+void handleUnload() {
+
 }
 
 float calculateLoad(HX711 cell) {
@@ -139,7 +208,7 @@ void getRTCValues() {
 
 void updateLCD(){
   lcd.setCursor(0, 0);
-  lcd.print(totalLoad); 
+  lcd.print(currentLoad); 
   lcd.print(" lbs    ");
 
   lcd.setCursor(0, 1);
@@ -150,4 +219,31 @@ void updateLCD(){
   lcd.print(minute/10); lcd.print(minute%10); lcd.print(":");
   lcd.print(second/10); lcd.print(second%10);
   lcd.print("   ");
+}
+
+void sleepFunction() {
+  alarmHour = hour;
+  alarmMinute = minute + 5;
+  alarmSecond = second;
+
+  if(minute + 5 >= 60) {
+    alarmHour++;
+    alarmMinute = alarmMinute % 60;
+  }
+  myRTC.turnOffAlarm(1);
+  myRTC.setA1Time(
+      alarmDay, alarmHour, alarmMinute, alarmSecond,
+      alarmBits, alarmDayIsDay, alarmH12, alarmPM);
+  // enable Alarm 1 interrupts
+  myRTC.turnOnAlarm(1);
+  // clear Alarm 1 flag
+  myRTC.checkIfAlarm(1);
+
+  SMCR |= _BV(SM2);
+  SMCR |= _BV(SM1);
+  SMCR |= _BV(SM0);
+}
+
+void sleepISR() {
+
 }
