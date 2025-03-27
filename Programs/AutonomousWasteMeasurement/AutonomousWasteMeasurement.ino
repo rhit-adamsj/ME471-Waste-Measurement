@@ -17,10 +17,10 @@ byte alarmDay;
 byte alarmHour;
 byte alarmMinute;
 byte alarmSecond;
-byte alarmBits;
-bool alarmDayIsDay;
-bool alarmH12;
-bool alarmPM;
+byte alarmBits = 0b00001100;  // Alarm when minutes and seconds match
+bool alarmDayIsDay = false;   // using date of month
+bool alarmH12 = false;
+bool alarmPM = false; 
 
 float prevLoad;
 bool unloaded = false;
@@ -75,42 +75,31 @@ void setup() {
   // Try to prevent Alarm 2 altogether by assigning a 
   // nonsensical alarm minute value that cannot match the clock time,
   // and an alarmBits value to activate "when minutes match".
-  alarmMinute = 0xFF; // a value that will never match the time
-  alarmBits = 0b01100000; // Alarm 2 when minutes match, i.e., never
+  
+  // 0xFF = a value that will never match the time
+  // 0b01100000 = Alarm 2 when minutes match, i.e., never
   
   // Upload the parameters to prevent Alarm 2 entirely
   myRTC.setA2Time(
-      alarmDay, alarmHour, alarmMinute,
-      alarmBits, alarmDayIsDay, alarmH12, alarmPM);
+      alarmDay, alarmHour, 0xFF,
+      0b01100000, alarmDayIsDay, alarmH12, alarmPM);
   // disable Alarm 2 interrupt
   myRTC.turnOffAlarm(2);
   // clear Alarm 2 flag
   myRTC.checkIfAlarm(2);
-
-  // Disable Analog Comparator
-  // ACSR |= _BV(ACD);
-
-  // Disable ADC via and set corresponding power reduction mode
-  // ADCSRA &= ~_BV(ADEN);
-  // PRR1 |= _BV(PRADC);
 }
 
 void loop() {
   load1 = calculateLoad(cell1);
-  Serial.println(load1);
+  cell1.power_down();
   load2 = calculateLoad(cell2);
-  Serial.println(load2);
+  cell2.power_down();
   load3 = calculateLoad(cell3);
-  Serial.println(load3);
+  cell3.power_down();
   load4 = calculateLoad(cell4);
-  Serial.println(load4);
+  cell4.power_down();
 
   currentLoad = load1+load2+load3+load4;
-
-  cell1.power_down();
-  cell2.power_down();
-  cell3.power_down();
-  cell4.power_down();
 
   /*if (currentLoad - prevLoad)/prevLoad < -0.5 {
     // If relative change in weight shows more than a 50% decrease from last measurement, do things
@@ -119,12 +108,12 @@ void loop() {
   }*/
 
   getRTCValues();
-  Serial.print("Time: "); Serial.print(dOW + ", ");
-  Serial.print(month); Serial.print("/"); Serial.print(date); Serial.print("/"); Serial.print(year); Serial.print(" ");
-  Serial.print(hour); Serial.print(":"); Serial.print(minute); Serial.print(":"); Serial.print(second);
-  Serial.println();
-  Serial.print("Total load = "); Serial.print(currentLoad); Serial.println(" lbs");
   updateLCD();
+  // Serial.print("Time: "); Serial.print(dOW + ", ");
+  // Serial.print(month); Serial.print("/"); Serial.print(date); Serial.print("/"); Serial.print(year); Serial.print(" ");
+  // Serial.print(hour); Serial.print(":"); Serial.print(minute); Serial.print(":"); Serial.print(second);
+  // Serial.println();
+  // Serial.print("Total load = "); Serial.print(currentLoad); Serial.println(" lbs");
   
   // Powerdown until needed again
   goToSleep();
@@ -140,11 +129,7 @@ void handleUnload() {
 }
 
 float calculateLoad(HX711 cell) {
-  /*Serial.print("one reading:\t");
-  Serial.print(scale.get_units(), 1);
-  Serial.print("\t| average:\t");
-  Serial.println(scale.get_units(10), 1);*/
-  return cell.get_units();
+  return cell.get_units(10));
   }
 
 void getRTCValues() {
@@ -197,13 +182,24 @@ void updateLCD(){
 }
 
 void goToSleep() {
-  
-  alarmDay = myRTC.getDate();
-  alarmHour = myRTC.getHour(alarmH12, alarmPM);
-  alarmMinute = myRTC.getMinute() + 5;  // Set alarm1 for 5 minutes
-  alarmSecond = myRTC.getSecond();
-  alarmBits = 0b00001100; // Alarm 1 when minutes match
-  alarmDayIsDay = false; // using date of month
+  // Disable Analog Comparator
+  // ACSR |= _BV(ACD);
+
+  // Disable ADC via and set corresponding power reduction mode
+  // ADCSRA &= ~_BV(ADEN);
+  // PRR1 |= _BV(PRADC);
+
+  alarmDay = date;
+  alarmSecond = second;
+
+  // Set alarm1 for 5 minutes
+  if minute + 5 >= 60 {
+    alarmHour = hour + 1;
+    alarmMinute = (minute + 5) % 60;
+  } else {
+    alarmHour = hour;
+    alarmMinute = minute + 5;
+  }
 
   // Upload initial parameters of Alarm 1
   myRTC.turnOffAlarm(1);
@@ -220,10 +216,11 @@ void goToSleep() {
   attachInterrupt(digitalPinToInterrupt(wakePin), SleepISR, FALLING);  // Assign parameter values for Alarm 1
 
   set_sleep_mode(SLEEP_MODE_PWR_DOWN);
+  sleep_cpu();
 }
 
 void SleepISR() {
-
+  sleep_disable();
   // Disable interrupt pin to prevent repetition
   detachInterrupt(digitalPinToInterrupt(wakePin));
 }
