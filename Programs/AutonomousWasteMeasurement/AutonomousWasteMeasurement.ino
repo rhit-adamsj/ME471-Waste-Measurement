@@ -2,6 +2,7 @@
 #include <HX711.h>
 #include <DS3231.h>
 #include <Wire.h>
+#include <avr/sleep.h>
 
 float load1; float load2; float load3; float load4; float currentLoad;
 
@@ -26,17 +27,19 @@ bool unloaded = false;
 volatile bool alarmFlag = false;
 
 HX711 cell1; 
-const int LOADCELL1_SCK_PIN = 24;
-const int LOADCELL1_DOUT_PIN = 4;
+#define LOADCELL1_SCK_PIN 24
+#define LOADCELL1_DOUT_PIN 4
 HX711 cell2;
-const int LOADCELL2_SCK_PIN = 25;
-const int LOADCELL2_DOUT_PIN = 5;
+#define LOADCELL2_SCK_PIN 25
+#define LOADCELL2_DOUT_PIN 5
 HX711 cell3;
-const int LOADCELL3_SCK_PIN = 26;
-const int LOADCELL3_DOUT_PIN = 6;
+#define LOADCELL3_SCK_PIN 26
+#define LOADCELL3_DOUT_PIN 6
 HX711 cell4;
-const int LOADCELL4_SCK_PIN = 27;
-const int LOADCELL4_DOUT_PIN = 7;
+#define LOADCELL4_SCK_PIN 27
+#define LOADCELL4_DOUT_PIN 7
+
+#define wakePin 2
 
 LiquidCrystal lcd(13, 12, 11, 10, 9, 8);
 
@@ -62,8 +65,27 @@ void setup() {
   cell3.tare();
   cell4.set_scale(2000.f);
   cell4.tare();
-
+  
   lcd.begin(16, 2);
+
+  // When using interrupt with only one of the DS3231 alarms, as in this example,
+  // it may be possible to prevent the other alarm entirely,
+  // so it will not covertly block the outgoing interrupt signal.
+
+  // Try to prevent Alarm 2 altogether by assigning a 
+  // nonsensical alarm minute value that cannot match the clock time,
+  // and an alarmBits value to activate "when minutes match".
+  alarmMinute = 0xFF; // a value that will never match the time
+  alarmBits = 0b01100000; // Alarm 2 when minutes match, i.e., never
+  
+  // Upload the parameters to prevent Alarm 2 entirely
+  myRTC.setA2Time(
+      alarmDay, alarmHour, alarmMinute,
+      alarmBits, alarmDayIsDay, alarmH12, alarmPM);
+  // disable Alarm 2 interrupt
+  myRTC.turnOffAlarm(2);
+  // clear Alarm 2 flag
+  myRTC.checkIfAlarm(2);
 
   // Disable Analog Comparator
   // ACSR |= _BV(ACD);
@@ -103,61 +125,14 @@ void loop() {
   Serial.println();
   Serial.print("Total load = "); Serial.print(currentLoad); Serial.println(" lbs");
   updateLCD();
-  delay(1000);
+  
+  // Powerdown until needed again
+  goToSleep();
+
   cell1.power_up();
   cell2.power_up();
   cell3.power_up();
   cell4.power_up();
-
-  if alarmFlag {
-    // capture the time the alarm occurred
-    DateTime alarmTime = RTClib::now();
-    // disable Alarm 2 interrupt output
-    myRTC.turnOffAlarm(2);
-
-    // We need to clear both of the alarm flags
-    // before DS3231 can output another alarm interrupt.
-
-    // Capture Alarm 1 flag for later assessment
-    // and automatically clear Alarm 1 flag
-    bool alarm1Flag = myRTC.checkIfAlarm(1);
-
-    // Clear Alarm 2 flag. No need to retain its value.
-    myRTC.checkIfAlarm(2);
-
-    // prepare parameter values for setting a new alarm time
-    alarmBits = 0b01100000; // Alarm 2 when minutes match
-    alarmH12 = false; // interpret hour in 24-hour mode
-    alarmPM = false; // irrelevant in 24-hour mode, but it needs a value
-    alarmIsDay = false; // interpret "day" value as a date in the month
-
-    // add 600 seconds (10 minutes)
-    uint32_t nextAlarm = alarmTime.unixtime() + 600;
-    // update values in the DateTime
-    alarmTime = DateTime(nextAlarm);
-
-    // Set the next time for Alarm 2.
-    // Note that only the "minutes" value is significant,
-    // yet we must supply the day and hour also,
-    // and it does no harm to supply real ones.
-
-    myRTC.setA2Time (
-    // get these values from the DateTime object
-    alarmTime.day(), // from a DateTime, will be date of the month
-    alarmTime.hour(), // from a DateTime, will be in 24-hour format
-    alarmTime.minute(),
-    // these were assigned, above, by the program
-    alarmBits,
-    alarmIsDay,
-    alarmH12,
-    alarmPM
-    );
-
-    // enable Alarm 2 interrupt output
-    myRTC.turnOnAlarm(2);
-  }
-
-  void sleepFunction();
 }
 
 void handleUnload() {
@@ -221,29 +196,34 @@ void updateLCD(){
   lcd.print("   ");
 }
 
-void sleepFunction() {
-  alarmHour = hour;
-  alarmMinute = minute + 5;
-  alarmSecond = second;
+void goToSleep() {
+  
+  alarmDay = myRTC.getDate();
+  alarmHour = myRTC.getHour(alarmH12, alarmPM);
+  alarmMinute = myRTC.getMinute() + 5;  // Set alarm1 for 5 minutes
+  alarmSecond = myRTC.getSecond();
+  alarmBits = 0b00001100; // Alarm 1 when minutes match
+  alarmDayIsDay = false; // using date of month
 
-  if(minute + 5 >= 60) {
-    alarmHour++;
-    alarmMinute = alarmMinute % 60;
-  }
+  // Upload initial parameters of Alarm 1
   myRTC.turnOffAlarm(1);
   myRTC.setA1Time(
       alarmDay, alarmHour, alarmMinute, alarmSecond,
       alarmBits, alarmDayIsDay, alarmH12, alarmPM);
-  // enable Alarm 1 interrupts
-  myRTC.turnOnAlarm(1);
-  // clear Alarm 1 flag
+  // clear Alarm 1 flag after setting the alarm time
   myRTC.checkIfAlarm(1);
+  // now it is safe to enable interrupt output
+  myRTC.turnOnAlarm(1);
 
-  SMCR |= _BV(SM2);
-  SMCR |= _BV(SM1);
-  SMCR |= _BV(SM0);
+  // attach clock interrupt
+  pinMode(wakePin, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(wakePin), SleepISR, FALLING);  // Assign parameter values for Alarm 1
+
+  set_sleep_mode(SLEEP_MODE_PWR_DOWN);
 }
 
-void sleepISR() {
+void SleepISR() {
 
+  // Disable interrupt pin to prevent repetition
+  detachInterrupt(digitalPinToInterrupt(wakePin));
 }
