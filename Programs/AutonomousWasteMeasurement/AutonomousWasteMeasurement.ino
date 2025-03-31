@@ -39,7 +39,7 @@ HX711 cell4;
 #define LOADCELL4_SCK_PIN 27
 #define LOADCELL4_DOUT_PIN 7
 
-#define wakePin 2
+#define wakePin 19
 
 LiquidCrystal lcd(13, 12, 11, 10, 9, 8);
 
@@ -67,7 +67,7 @@ void setup() {
   cell4.tare();
   
   lcd.begin(16, 2);
-
+  
   // When using interrupt with only one of the DS3231 alarms, as in this example,
   // it may be possible to prevent the other alarm entirely,
   // so it will not covertly block the outgoing interrupt signal.
@@ -87,6 +87,14 @@ void setup() {
   myRTC.turnOffAlarm(2);
   // clear Alarm 2 flag
   myRTC.checkIfAlarm(2);
+
+  // Disable Analog Comparator
+  ACSR |= _BV(ACD);
+  // Disable ADC via and set corresponding power reduction mode
+  ADCSRA &= ~_BV(ADEN);
+  PRR1 |= _BV(PRADC);
+
+  pinMode(wakePin, INPUT_PULLUP);
 }
 
 void loop() {
@@ -122,14 +130,15 @@ void loop() {
   cell2.power_up();
   cell3.power_up();
   cell4.power_up();
+  // delay(1000);
 }
 
 void handleUnload() {
-
+  
 }
 
 float calculateLoad(HX711 cell) {
-  return cell.get_units(10));
+  return cell.get_units();
   }
 
 void getRTCValues() {
@@ -182,18 +191,10 @@ void updateLCD(){
 }
 
 void goToSleep() {
-  // Disable Analog Comparator
-  // ACSR |= _BV(ACD);
-
-  // Disable ADC via and set corresponding power reduction mode
-  // ADCSRA &= ~_BV(ADEN);
-  // PRR1 |= _BV(PRADC);
-
   alarmDay = date;
   alarmSecond = second;
-
   // Set alarm1 for 5 minutes
-  if minute + 5 >= 60 {
+  if (minute + 5 >= 60) {
     alarmHour = hour + 1;
     alarmMinute = (minute + 5) % 60;
   } else {
@@ -212,15 +213,27 @@ void goToSleep() {
   myRTC.turnOnAlarm(1);
 
   // attach clock interrupt
-  pinMode(wakePin, INPUT_PULLUP);
-  attachInterrupt(digitalPinToInterrupt(wakePin), SleepISR, FALLING);  // Assign parameter values for Alarm 1
-
+  Serial.println("Alarm set, going to sleep");
+  delay(500);
   set_sleep_mode(SLEEP_MODE_PWR_DOWN);
+  sleep_enable();
+
+  noInterrupts();
+  attachInterrupt(digitalPinToInterrupt(wakePin), SleepISR, FALLING);  // Assign parameter values for Alarm 1
+  EIFR = _BV(INTF2); // Clear interrupt flag for wakePin interrupt
+
+  // turn off brown out detection via BODLEVEL fuses
+
+
+  // The BODS bit is automatically cleared after three clock cycles
+  // MCUCR = bit (BODS); 
+  interrupts();
   sleep_cpu();
+
+  Serial.println("I'm awake!");
 }
 
 void SleepISR() {
-  sleep_disable();
-  // Disable interrupt pin to prevent repetition
+  // Disable interrupt pin to prevent continuous interruptions
   detachInterrupt(digitalPinToInterrupt(wakePin));
 }
