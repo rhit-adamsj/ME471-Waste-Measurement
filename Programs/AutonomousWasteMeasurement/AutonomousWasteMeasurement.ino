@@ -3,13 +3,24 @@
 #include <DS3231.h>
 #include <Wire.h>
 #include <avr/sleep.h>
+#include <avr/power.h>
 
-float load1; float load2; float load3; float load4; float currentLoad;
+// Written by Jay Adams for Mechanical Engineering Capstone Design; Team 51
+
+float load1; 
+float load2; 
+float load3; 
+float load4; 
+float currentLoad; float maxLoad; 
+float prevLoad;
+bool waitToTare = false;
+bool shouldTare = false;
 
 DS3231 myRTC;
 byte year; byte month; byte date; byte nDoW; String dOW;
 byte hour; byte minute; byte second;
 byte tempC;
+byte tempRef; 
 bool century; bool h12Flag; bool pmFlag;
 
 // Variables for use in method parameter lists
@@ -17,55 +28,117 @@ byte alarmDay;
 byte alarmHour;
 byte alarmMinute;
 byte alarmSecond;
-byte alarmBits = 0b00001100;  // Alarm when minutes and seconds match
+byte alarmBits;
 bool alarmDayIsDay = false;   // using date of month
 bool alarmH12 = false;
 bool alarmPM = false; 
-
-float prevLoad;
-bool unloaded = false;
 volatile bool alarmFlag = false;
 
 HX711 cell1; 
 #define LOADCELL1_SCK_PIN 24
-#define LOADCELL1_DOUT_PIN 4
+#define LOADCELL1_DOUT_PIN 30
 HX711 cell2;
 #define LOADCELL2_SCK_PIN 25
-#define LOADCELL2_DOUT_PIN 5
+#define LOADCELL2_DOUT_PIN 31
 HX711 cell3;
 #define LOADCELL3_SCK_PIN 26
-#define LOADCELL3_DOUT_PIN 6
+#define LOADCELL3_DOUT_PIN 32
 HX711 cell4;
 #define LOADCELL4_SCK_PIN 27
-#define LOADCELL4_DOUT_PIN 7
+#define LOADCELL4_DOUT_PIN 33
 
-#define wakePin 19
+#define WAKE_PIN 19
+#define BACKLIGHT_TOGGLE_PIN 3
+#define ALARM_LENGTH 1  // Minutes
+#define MORNING_HOUR 8  // Time at which device will wake up after shutting down overnight
+#define NIGHT_HOUR 18   // Time at which device will shut down for the night
 
-LiquidCrystal lcd(13, 12, 11, 10, 9, 8);
+LiquidCrystal lcd(9, 8, 7, 6, 5, 4);
 
 void setup() {
+  // Implement power saving techniques
+
+  // Set all analog pins as digital outputs set to LOW
+  pinMode(A0, OUTPUT);
+  pinMode(A1, OUTPUT);
+  pinMode(A2, OUTPUT);
+  pinMode(A3, OUTPUT);
+  pinMode(A4, OUTPUT);
+  pinMode(A5, OUTPUT);
+  pinMode(A6, OUTPUT);
+  pinMode(A7, OUTPUT);
+  pinMode(A8, OUTPUT);
+  pinMode(A9, OUTPUT);
+  pinMode(A10, OUTPUT);
+  pinMode(A11, OUTPUT);
+  pinMode(A12, OUTPUT);
+  pinMode(A13, OUTPUT);
+  pinMode(A14, OUTPUT);
+  pinMode(A15, OUTPUT);
+
+  digitalWrite(A0, LOW);
+  digitalWrite(A1, LOW);
+  digitalWrite(A2, LOW);
+  digitalWrite(A3, LOW);
+  digitalWrite(A4, LOW);
+  digitalWrite(A5, LOW);
+  digitalWrite(A6, LOW);
+  digitalWrite(A7, LOW);
+  digitalWrite(A8, LOW);
+  digitalWrite(A9, LOW);
+  digitalWrite(A10, LOW);
+  digitalWrite(A11, LOW);
+  digitalWrite(A12, LOW);
+  digitalWrite(A13, LOW);
+  digitalWrite(A14, LOW);
+  digitalWrite(A15, LOW);
+
+  // Write all digital pins as LOW outputs
+  for (int i = 0; i <= 53; i++) {
+    pinMode(i, OUTPUT);
+    digitalWrite(i, LOW);
+  }
+
+  // Disable Analog Comparator
+  ACSR |= _BV(ACD);
+  // Disable ADC via and set corresponding power reduction mode
+  ADCSRA &= ~_BV(ADEN);
+  PRR1 |= _BV(PRADC);
+
+  // Implement avr/power library to disable unnecessary peripherals/processes
+  power_adc_disable();
+  power_spi_disable();
+  power_usart0_disable();
+  power_usart2_disable();
+  power_timer1_disable();
+  power_timer2_disable();
+  power_timer3_disable();
+  power_timer4_disable();
+  power_timer5_disable();
+
+  // Re-enable necessary pins --> AVOID USING DIGITAL 13 AS LED CONSUMES POWER
+  pinMode(wakePin, INPUT_PULLUP);
+  digitalWrite(backlightPin, HIGH);
+
   // Start the serial port
   Serial.begin(57600);
-    
   // Start the I2C interface
   Wire.begin();
-
   // Attach load cells to their respective input pins
   cell1.begin(LOADCELL1_DOUT_PIN, LOADCELL1_SCK_PIN);
   cell2.begin(LOADCELL2_DOUT_PIN, LOADCELL2_SCK_PIN);
   cell3.begin(LOADCELL3_DOUT_PIN, LOADCELL3_SCK_PIN);
   cell4.begin(LOADCELL4_DOUT_PIN, LOADCELL4_SCK_PIN);
-
   // Apply scaling factor and zero each load cell
-  cell1.set_scale(2000.f);
+  cell1.set_scale(1984.f); //1984 
   cell1.tare();
-  cell2.set_scale(2000.f);
+  cell2.set_scale(2003.f); //2003
   cell2.tare();
-  cell3.set_scale(2000.f);
+  cell3.set_scale(2013.f); //2013
   cell3.tare();
-  cell4.set_scale(2000.f);
+  cell4.set_scale(2040.f); //2040
   cell4.tare();
-  
+
   lcd.begin(16, 2);
   
   // When using interrupt with only one of the DS3231 alarms, as in this example,
@@ -88,13 +161,7 @@ void setup() {
   // clear Alarm 2 flag
   myRTC.checkIfAlarm(2);
 
-  // Disable Analog Comparator
-  ACSR |= _BV(ACD);
-  // Disable ADC via and set corresponding power reduction mode
-  ADCSRA &= ~_BV(ADEN);
-  PRR1 |= _BV(PRADC);
-
-  pinMode(wakePin, INPUT_PULLUP);
+  prevLoad = 0;
 }
 
 void loop() {
@@ -107,37 +174,74 @@ void loop() {
   load4 = calculateLoad(cell4);
   cell4.power_down();
 
-  currentLoad = load1+load2+load3+load4;
-
-  /*if (currentLoad - prevLoad)/prevLoad < -0.5 {
-    // If relative change in weight shows more than a 50% decrease from last measurement, do things
-    unloaded = true;
-    
-  }*/
+  Serial.print("Cell 1 = "); Serial.println(load1);
+  Serial.print("Cell 2 = "); Serial.println(load2);
+  Serial.print("Cell 3 = "); Serial.println(load3);
+  Serial.print("Cell 4 = "); Serial.println(load4);
 
   getRTCValues();
-  updateLCD();
-  // Serial.print("Time: "); Serial.print(dOW + ", ");
-  // Serial.print(month); Serial.print("/"); Serial.print(date); Serial.print("/"); Serial.print(year); Serial.print(" ");
-  // Serial.print(hour); Serial.print(":"); Serial.print(minute); Serial.print(":"); Serial.print(second);
-  // Serial.println();
-  // Serial.print("Total load = "); Serial.print(currentLoad); Serial.println(" lbs");
+  currentLoad = load1+load2+load3+load4;
+  if (currentLoad > maxLoad) {
+    maxLoad = currentLoad;
+  }
+
+  if (currentLoad < -200) {
+    // Very negative weight means dumpster must currently be off the scale
+    // Display last measured load. --> Do not update the value or re-tare.
+    Serial.println("Dumpster is not on scale!");
+    updateLCD(prevLoad);
+    shouldTare = false;
+    // waitToTare = false; Useless?
+  } else if (prevLoad > 20 && (currentLoad-prevLoad)/prevLoad < -0.5) {
+    // If relative change in weight shows more than a 50% decrease from last measurement and is beyond threshold where noise could reasonably be the culprit,
+    // Dumpster must have been unloaded and set back down on scale. --> Re-tare the scale and record the last measured load
+    Serial.println("Dumpster has been emptied!");
+    updateLCD(prevLoad);
+    prevLoad = currentLoad;
+    shouldTare = true;
+    // waitToTare = false;
+  } else {
+    updateLCD(currentLoad);
+    shouldTare = false;
+    prevLoad = currentLoad;
+  }
   
-  // Powerdown until needed again
-  goToSleep();
+  Serial.print("Time: "); Serial.print(dOW + ", ");
+  Serial.print(month); Serial.print("/"); Serial.print(date); Serial.print("/"); Serial.print(year); Serial.print(" ");
+  Serial.print(hour); Serial.print(":"); Serial.print(minute); Serial.print(":"); Serial.print(second);
+  Serial.println();
+  Serial.print("Total load = "); Serial.print(currentLoad); Serial.println(" lbs");
+  
+   // Powerdown until needed again
+  if (hour >= sleepHour) {
+    digitalWrite(backlightPin, LOW);
+    alarmHour = wakeHour;
+    alarmMinute = 0;
+    alarmSecond = 0;
+    alarmBits = 0b00001000; // Alarm when hour, minute, and second match, i.e. on the hour specified
+    goToSleep();
+    digitalWrite(backlightPin, HIGH);
+  } else {
+    alarmHour = 0;
+    alarmMinute = (minute + alarmLength) % 60;
+    alarmSecond = second;
+    alarmBits = 0b00001100; // Alarm when minutes and seconds match, i.e. on the minute specified
+    goToSleep();
+  }
 
   cell1.power_up();
   cell2.power_up();
   cell3.power_up();
   cell4.power_up();
-  // delay(1000);
-}
-
-void handleUnload() {
-  
+  if (shouldTare) {
+    cell1.tare(); cell2.tare(); cell3.tare(); cell4.tare();
+    tempRef = tempC;
+    shouldTare = false;
+  }
 }
 
 float calculateLoad(HX711 cell) {
+  // TO DO: Add temperature compensation
   return cell.get_units();
   }
 
@@ -175,33 +279,29 @@ void getRTCValues() {
   tempC = myRTC.getTemperature();
 }
 
-void updateLCD(){
+void updateLCD(float totalLoad){
   lcd.setCursor(0, 0);
-  lcd.print(currentLoad); 
+  lcd.print("Now: ");
+  lcd.print(totalLoad); 
   lcd.print(" lbs    ");
 
   lcd.setCursor(0, 1);
-  lcd.print(month); lcd.print("/"); 
-  lcd.print(date); lcd.print("/"); 
-  lcd.print(year); lcd.print(" ");
-  lcd.print(hour); lcd.print(":"); 
-  lcd.print(minute/10); lcd.print(minute%10); lcd.print(":");
-  lcd.print(second/10); lcd.print(second%10);
-  lcd.print("   ");
+  lcd.print("Max: ");
+  lcd.print(maxLoad);
+  lcd.print(" lbs    ");
+
+  // lcd.setCursor(0, 1);
+  // lcd.print(month); lcd.print("/"); 
+  // lcd.print(date); lcd.print("/"); 
+  // lcd.print(year); lcd.print(" ");
+  // lcd.print(hour); lcd.print(":"); 
+  // lcd.print(minute/10); lcd.print(minute%10); lcd.print(":");
+  // lcd.print(second/10); lcd.print(second%10);
+  // lcd.print("   ");
+  Serial.print("Total Load = "); Serial.println(totalLoad);
 }
 
 void goToSleep() {
-  alarmDay = date;
-  alarmSecond = second;
-  // Set alarm1 for 5 minutes
-  if (minute + 5 >= 60) {
-    alarmHour = hour + 1;
-    alarmMinute = (minute + 5) % 60;
-  } else {
-    alarmHour = hour;
-    alarmMinute = minute + 5;
-  }
-
   // Upload initial parameters of Alarm 1
   myRTC.turnOffAlarm(1);
   myRTC.setA1Time(
@@ -214,7 +314,7 @@ void goToSleep() {
 
   // attach clock interrupt
   Serial.println("Alarm set, going to sleep");
-  delay(500);
+  delay(100);
   set_sleep_mode(SLEEP_MODE_PWR_DOWN);
   sleep_enable();
 
@@ -222,11 +322,6 @@ void goToSleep() {
   attachInterrupt(digitalPinToInterrupt(wakePin), SleepISR, FALLING);  // Assign parameter values for Alarm 1
   EIFR = _BV(INTF2); // Clear interrupt flag for wakePin interrupt
 
-  // turn off brown out detection via BODLEVEL fuses
-
-
-  // The BODS bit is automatically cleared after three clock cycles
-  // MCUCR = bit (BODS); 
   interrupts();
   sleep_cpu();
 
