@@ -56,9 +56,12 @@ HX711 cell4;
 LiquidCrystal lcd(9, 8, 7, 6, 5, 4);
 
 void setup() {
-  // Implement power saving techniques
+  // Start the serial port
+  Serial.begin(57600);
+  // Start the I2C interface
+  Wire.begin();
 
-  // Set all analog pins as digital outputs set to LOW
+  // Implement power saving techniques
   pinMode(A0, OUTPUT);
   pinMode(A1, OUTPUT);
   pinMode(A2, OUTPUT);
@@ -102,28 +105,30 @@ void setup() {
   // Disable Analog Comparator
   ACSR |= _BV(ACD);
   // Disable ADC via and set corresponding power reduction mode
-  ADCSRA &= ~_BV(ADEN);
-  PRR1 |= _BV(PRADC);
+  ADCSRA = 0;
+  PRR0 |= _BV(PRADC);
+  PRR0 |= _BV(PRUSART0); // Disables Serial outputs for debugging, but seems to operate fine --> Comment this line when testing
+  PRR0 |= _BV(PRSPI);
+  PRR0 |= _BV(PRTIM1);
+  // PRR0 |= _BV(PRTIM0); // DONT TOUCH
+  PRR0 |= _BV(PRTIM2);
 
-  // Implement avr/power library to disable unnecessary peripherals/processes
-  power_adc_disable();
-  power_spi_disable();
-  power_usart0_disable();
-  power_usart2_disable();
-  power_timer1_disable();
-  power_timer2_disable();
-  power_timer3_disable();
-  power_timer4_disable();
-  power_timer5_disable();
+  PRR1 |= _BV(PRUSART1);    
+  PRR1 |= _BV(PRUSART2); 
+  PRR1 |= _BV(PRUSART3);
+  PRR1 |= _BV(PRTIM3);
+  PRR1 |= _BV(PRTIM4);
+  PRR1 |= _BV(PRTIM5);
 
   // Re-enable necessary pins --> AVOID USING DIGITAL 13 AS LED CONSUMES POWER
-  pinMode(wakePin, INPUT_PULLUP);
-  digitalWrite(backlightPin, HIGH);
+  pinMode(WAKE_PIN, INPUT_PULLUP);
+  pinMode(LOADCELL1_DOUT_PIN, INPUT);
+  pinMode(LOADCELL2_DOUT_PIN, INPUT);
+  pinMode(LOADCELL3_DOUT_PIN, INPUT);
+  pinMode(LOADCELL4_DOUT_PIN, INPUT);
 
-  // Start the serial port
-  Serial.begin(57600);
-  // Start the I2C interface
-  Wire.begin();
+  digitalWrite(BACKLIGHT_TOGGLE_PIN, HIGH);
+
   // Attach load cells to their respective input pins
   cell1.begin(LOADCELL1_DOUT_PIN, LOADCELL1_SCK_PIN);
   cell2.begin(LOADCELL2_DOUT_PIN, LOADCELL2_SCK_PIN);
@@ -213,17 +218,17 @@ void loop() {
   Serial.print("Total load = "); Serial.print(currentLoad); Serial.println(" lbs");
   
    // Powerdown until needed again
-  if (hour >= sleepHour) {
-    digitalWrite(backlightPin, LOW);
-    alarmHour = wakeHour;
+  if (hour >= NIGHT_HOUR) {
+    digitalWrite(BACKLIGHT_TOGGLE_PIN, LOW);
+    alarmHour = MORNING_HOUR;
     alarmMinute = 0;
     alarmSecond = 0;
     alarmBits = 0b00001000; // Alarm when hour, minute, and second match, i.e. on the hour specified
     goToSleep();
-    digitalWrite(backlightPin, HIGH);
+    digitalWrite(BACKLIGHT_TOGGLE_PIN, HIGH);
   } else {
     alarmHour = 0;
-    alarmMinute = (minute + alarmLength) % 60;
+    alarmMinute = (minute + ALARM_LENGTH) % 60;
     alarmSecond = second;
     alarmBits = 0b00001100; // Alarm when minutes and seconds match, i.e. on the minute specified
     goToSleep();
@@ -319,7 +324,7 @@ void goToSleep() {
   sleep_enable();
 
   noInterrupts();
-  attachInterrupt(digitalPinToInterrupt(wakePin), SleepISR, FALLING);  // Assign parameter values for Alarm 1
+  attachInterrupt(digitalPinToInterrupt(WAKE_PIN), SleepISR, FALLING);  // Assign parameter values for Alarm 1
   EIFR = _BV(INTF2); // Clear interrupt flag for wakePin interrupt
 
   interrupts();
@@ -330,5 +335,5 @@ void goToSleep() {
 
 void SleepISR() {
   // Disable interrupt pin to prevent continuous interruptions
-  detachInterrupt(digitalPinToInterrupt(wakePin));
+  detachInterrupt(digitalPinToInterrupt(WAKE_PIN));
 }
