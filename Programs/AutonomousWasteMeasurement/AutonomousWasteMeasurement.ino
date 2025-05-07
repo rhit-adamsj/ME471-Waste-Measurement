@@ -13,8 +13,12 @@ float load3;
 float load4; 
 float currentLoad; float maxLoad; 
 float prevLoad;
-bool waitToTare = false;
 bool shouldTare = false;
+
+volatile uint8_t mainEventFlags = 0;
+#define ALARM_WAKEUP_FLAG 0x01
+#define PUSHBUTTON_TARE_FLAG 0x02
+#define PUSHBUTTON_LCD_FLAG 0x04
 
 DS3231 myRTC;
 byte year; byte month; byte date; byte nDoW; String dOW;
@@ -48,10 +52,12 @@ HX711 cell4;
 #define LOADCELL4_DOUT_PIN 33
 
 #define WAKE_PIN 19
-#define BACKLIGHT_TOGGLE_PIN 3
+#define BACKLIGHT_CONTROL_PIN 10
 #define ALARM_LENGTH 1  // Minutes
 #define MORNING_HOUR 8  // Time at which device will wake up after shutting down overnight
 #define NIGHT_HOUR 18   // Time at which device will shut down for the night
+#define TARE_BUTTON_PIN 2
+#define LCD_BUTTON_PIN 3
 
 LiquidCrystal lcd(9, 8, 7, 6, 5, 4);
 
@@ -107,7 +113,7 @@ void setup() {
   // Disable ADC via and set corresponding power reduction mode
   ADCSRA = 0;
   PRR0 |= _BV(PRADC);
-  PRR0 |= _BV(PRUSART0); // Disables Serial outputs for debugging, but seems to operate fine --> Comment this line when testing
+  // PRR0 |= _BV(PRUSART0); // Disables Serial outputs for debugging, but seems to operate fine --> Comment this line when testing
   PRR0 |= _BV(PRSPI);
   PRR0 |= _BV(PRTIM1);
   // PRR0 |= _BV(PRTIM0); // DONT TOUCH
@@ -126,8 +132,10 @@ void setup() {
   pinMode(LOADCELL2_DOUT_PIN, INPUT);
   pinMode(LOADCELL3_DOUT_PIN, INPUT);
   pinMode(LOADCELL4_DOUT_PIN, INPUT);
+  pinMode(TARE_BUTTON_PIN, INPUT_PULLUP);
+  pinMode(LCD_BUTTON_PIN, INPUT_PULLUP);
 
-  digitalWrite(BACKLIGHT_TOGGLE_PIN, HIGH);
+  digitalWrite(BACKLIGHT_CONTROL_PIN, HIGH);
 
   // Attach load cells to their respective input pins
   cell1.begin(LOADCELL1_DOUT_PIN, LOADCELL1_SCK_PIN);
@@ -167,6 +175,7 @@ void setup() {
   myRTC.checkIfAlarm(2);
 
   prevLoad = 0;
+  interrupts();
 }
 
 void loop() {
@@ -194,19 +203,34 @@ void loop() {
     // Very negative weight means dumpster must currently be off the scale
     // Display last measured load. --> Do not update the value or re-tare.
     Serial.println("Dumpster is not on scale!");
-    updateLCD(prevLoad);
+    if (lcdEnabled) {
+      digitalWrite(BACKLIGHT_CONTROL_PIN, HIGH);
+      updateLCD(prevLoad);
+    } else {
+      digitalWrite(BACKLIGHT_CONTROL_PIN, LOW);
+    }
     shouldTare = false;
     // waitToTare = false; Useless?
   } else if (prevLoad > 20 && (currentLoad-prevLoad)/prevLoad < -0.5) {
     // If relative change in weight shows more than a 50% decrease from last measurement and is beyond threshold where noise could reasonably be the culprit,
     // Dumpster must have been unloaded and set back down on scale. --> Re-tare the scale and record the last measured load
     Serial.println("Dumpster has been emptied!");
-    updateLCD(prevLoad);
+    if (lcdEnabled) {
+      digitalWrite(BACKLIGHT_CONTROL_PIN, HIGH);
+      updateLCD(prevLoad);
+    } else {
+      digitalWrite(BACKLIGHT_CONTROL_PIN, LOW);
+    }
     prevLoad = currentLoad;
     shouldTare = true;
     // waitToTare = false;
   } else {
-    updateLCD(currentLoad);
+    if (lcdEnabled) {
+      digitalWrite(BACKLIGHT_CONTROL_PIN, HIGH);
+      updateLCD(currentLoad);
+    } else {
+      digitalWrite(BACKLIGHT_CONTROL_PIN, LOW);
+    }
     shouldTare = false;
     prevLoad = currentLoad;
   }
@@ -217,15 +241,15 @@ void loop() {
   Serial.println();
   Serial.print("Total load = "); Serial.print(currentLoad); Serial.println(" lbs");
   
-   // Powerdown until needed again
+  // Powerdown until needed again
   if (hour >= NIGHT_HOUR) {
-    digitalWrite(BACKLIGHT_TOGGLE_PIN, LOW);
+    digitalWrite(BACKLIGHT_CONTROL_PIN, LOW);
     alarmHour = MORNING_HOUR;
     alarmMinute = 0;
     alarmSecond = 0;
     alarmBits = 0b00001000; // Alarm when hour, minute, and second match, i.e. on the hour specified
     goToSleep();
-    digitalWrite(BACKLIGHT_TOGGLE_PIN, HIGH);
+    digitalWrite(BACKLIGHT_CONTROL_PIN, HIGH);
   } else {
     alarmHour = 0;
     alarmMinute = (minute + ALARM_LENGTH) % 60;
@@ -233,6 +257,7 @@ void loop() {
     alarmBits = 0b00001100; // Alarm when minutes and seconds match, i.e. on the minute specified
     goToSleep();
   }
+  // delay(1000);
 
   cell1.power_up();
   cell2.power_up();
@@ -242,6 +267,7 @@ void loop() {
     cell1.tare(); cell2.tare(); cell3.tare(); cell4.tare();
     tempRef = tempC;
     shouldTare = false;
+    forceTare = false;
   }
 }
 
@@ -326,6 +352,10 @@ void goToSleep() {
   noInterrupts();
   attachInterrupt(digitalPinToInterrupt(WAKE_PIN), SleepISR, FALLING);  // Assign parameter values for Alarm 1
   EIFR = _BV(INTF2); // Clear interrupt flag for wakePin interrupt
+  attachInterrupt(digitalPinToInterrupt(TARE_BUTTON_PIN), TareISR, FALLING);
+  EIFR = _BV(INTF4); // Clear interrupt flag for wakePin interrupt
+  attachInterrupt(digitalPinToInterrupt(LCD_BUTTON_PIN), lcdISR, FALLING);
+  EIFR = _BV(INTF5); // Clear interrupt flag for wakePin interrupt
 
   interrupts();
   sleep_cpu();
@@ -336,4 +366,16 @@ void goToSleep() {
 void SleepISR() {
   // Disable interrupt pin to prevent continuous interruptions
   detachInterrupt(digitalPinToInterrupt(WAKE_PIN));
+}
+
+void TareISR() {
+  detachInterrupt(digitalPinToInterrupt(TARE_BUTTON_PIN));
+  forceTare = true;
+  Serial.println(forceTare);
+}
+
+void lcdISR() {
+  detachInterrupt(digitalPinToInterrupt(LCD_BUTTON_PIN));
+  lcdEnabled = !lcdEnabled;
+  Serial.println(lcdEnabled);
 }
