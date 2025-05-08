@@ -54,7 +54,7 @@ HX711 cell4;
 
 #define WAKE_PIN 2
 #define BACKLIGHT_CONTROL_PIN 10
-#define ALARM_LENGTH 1  // Minutes
+#define ALARM_LENGTH 5  // Minutes
 #define MORNING_HOUR 8  // Time at which device will wake up after shutting down overnight
 #define NIGHT_HOUR 18   // Time at which device will shut down for the night
 #define PUSHBUTTON_TARE_PIN 19
@@ -177,11 +177,9 @@ void setup() {
   myRTC.checkIfAlarm(2);
 
   prevLoad = 0;
-  interrupts();
 }
 
 void loop() {
-
   load1 = calculateLoad(cell1);
   cell1.power_down();
   load2 = calculateLoad(cell2);
@@ -204,16 +202,16 @@ void loop() {
 
   if (currentLoad < -200) {
     // Very negative weight means dumpster must currently be off the scale
-    // Display last measured load. --> Do not update the value or re-tare.
+    // Display last measured load. --> Do not update the weight or re-tare.
     Serial.println("Dumpster is not on scale!");
-    updateLCD(prevLoad);
+    // updateLCD(prevLoad);
     shouldTare = false;
     // waitToTare = false; Useless?
   } else if (prevLoad > 20 && (currentLoad-prevLoad)/prevLoad < -0.5) {
     // If relative change in weight shows more than a 50% decrease from last measurement and is beyond threshold where noise could reasonably be the culprit,
     // Dumpster must have been unloaded and set back down on scale. --> Re-tare the scale and record the last measured load
     Serial.println("Dumpster has been emptied!");
-    updateLCD(prevLoad);
+    // updateLCD(prevLoad);
     prevLoad = currentLoad;
     shouldTare = true;
     // waitToTare = false;
@@ -223,29 +221,30 @@ void loop() {
     prevLoad = currentLoad;
   }
   
-  Serial.print("Time: "); Serial.print(dOW + ", ");
-  Serial.print(month); Serial.print("/"); Serial.print(date); Serial.print("/"); Serial.print(year); Serial.print(" ");
-  Serial.print(hour); Serial.print(":"); Serial.print(minute); Serial.print(":"); Serial.print(second);
-  Serial.println();
-  Serial.print("Total load = "); Serial.print(currentLoad); Serial.println(" lbs");
+  // Serial.print("Time: "); Serial.print(dOW + ", ");
+  // Serial.print(month); Serial.print("/"); Serial.print(date); Serial.print("/"); Serial.print(year); Serial.print(" ");
+  // Serial.print(hour); Serial.print(":"); Serial.print(minute); Serial.print(":"); Serial.print(second);
+  // Serial.println();
+  // Serial.print("Total load = "); Serial.print(currentLoad); Serial.println(" lbs");
   
   // Night Mode
-  while (hour >= NIGHT_HOUR || hour < MORNING_HOUR) { 
+  if (hour > NIGHT_HOUR) {
     digitalWrite(BACKLIGHT_CONTROL_PIN, LOW);
     alarmHour = MORNING_HOUR;
     alarmMinute = 0;
     alarmSecond = 0;
     alarmBits = 0b00001000; // Alarm when hour, minute, and second match, i.e. on the hour specified
-    goToSleep(); 
+    while (hour >= NIGHT_HOUR || hour < MORNING_HOUR) { 
+      goToSleep(); 
+    }
+  } else {
+    // Powerdown until needed again
+    alarmHour = 0;
+    alarmMinute = (minute + ALARM_LENGTH) % 60;
+    alarmSecond = second;
+    alarmBits = 0b00001100; // Alarm when minutes and seconds match, i.e. on the minute specified
+    goToSleep();
   }
-
-  // Powerdown until needed again
-  alarmHour = 0;
-  alarmMinute = (minute + ALARM_LENGTH) % 60;
-  alarmSecond = second;
-  alarmBits = 0b00001100; // Alarm when minutes and seconds match, i.e. on the minute specified
-  goToSleep();
-
   // delay(1000);
 
   // Check for LCD button pressed
@@ -258,10 +257,7 @@ void loop() {
     mainEventFlags &= !PUSHBUTTON_LCD_FLAG;
   }
 
-  cell1.power_up();
-  cell2.power_up();
-  cell3.power_up();
-  cell4.power_up();
+  cell1.power_up(); cell2.power_up(); cell3.power_up(); cell4.power_up();
 
   if (mainEventFlags & PUSHBUTTON_TARE_FLAG) {   // Check for tare button pressed
     delay(DEBOUNCE_DELAY);
