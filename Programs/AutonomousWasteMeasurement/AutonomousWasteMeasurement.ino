@@ -3,7 +3,6 @@
 #include <DS3231.h>
 #include <Wire.h>
 #include <avr/sleep.h>
-#include <avr/power.h>
 
 // Written by Jay Adams for Mechanical Engineering Capstone Design; Team 51
 
@@ -27,6 +26,7 @@ byte hour; byte minute; byte second;
 byte tempC;
 byte tempRef; 
 bool century; bool h12Flag; bool pmFlag;
+bool disableLcdOnNextCycle = false;
 
 // Variables for use in method parameter lists
 byte alarmDay;
@@ -115,7 +115,7 @@ void setup() {
   // Disable ADC via and set corresponding power reduction mode
   ADCSRA = 0;
   PRR0 |= _BV(PRADC);
-  // PRR0 |= _BV(PRUSART0); // Disables Serial outputs for debugging, but seems to operate fine --> Comment this line when testing
+  PRR0 |= _BV(PRUSART0); // Disables Serial outputs for debugging, but seems to operate fine --> Comment this line when testing
   PRR0 |= _BV(PRSPI);
   PRR0 |= _BV(PRTIM1);
   // PRR0 |= _BV(PRTIM0); // DONT TOUCH
@@ -137,7 +137,7 @@ void setup() {
   pinMode(PUSHBUTTON_TARE_PIN, INPUT_PULLUP);
   pinMode(PUSHBUTTON_LCD_PIN, INPUT_PULLUP);
 
-  digitalWrite(BACKLIGHT_CONTROL_PIN, HIGH);
+  // digitalWrite(BACKLIGHT_CONTROL_PIN, HIGH); // Uncomment when water testing
 
   // Attach load cells to their respective input pins
   cell1.begin(LOADCELL1_DOUT_PIN, LOADCELL1_SCK_PIN);
@@ -227,8 +227,9 @@ void loop() {
   // Serial.println();
   // Serial.print("Total load = "); Serial.print(currentLoad); Serial.println(" lbs");
   
-  // Night Mode
-  if (hour > NIGHT_HOUR) {
+  //Go to sleep
+  if (hour >= NIGHT_HOUR) {
+    // Night mode
     digitalWrite(BACKLIGHT_CONTROL_PIN, LOW);
     alarmHour = MORNING_HOUR;
     alarmMinute = 0;
@@ -238,7 +239,7 @@ void loop() {
       goToSleep(); 
     }
   } else {
-    // Powerdown until needed again
+    // Sleep until needed for next measurement
     alarmHour = 0;
     alarmMinute = (minute + ALARM_LENGTH) % 60;
     alarmSecond = second;
@@ -246,6 +247,7 @@ void loop() {
     goToSleep();
   }
   // delay(1000);
+  // updateLCD(currentLoad);
 
   // Check for LCD button pressed
   if (mainEventFlags & PUSHBUTTON_LCD_FLAG) {
@@ -339,6 +341,15 @@ void updateLCD(float totalLoad){
 }
 
 void goToSleep() {
+
+  // Disable LCD if it has been left on
+  if (disableLcdOnNextCycle) {
+    digitalWrite(BACKLIGHT_CONTROL_PIN, LOW);
+    disableLcdOnNextCycle = false;
+  } else if (digitalRead(BACKLIGHT_CONTROL_PIN)) {
+    disableLcdOnNextCycle = true;
+  }
+
   // Upload initial parameters of Alarm 1
   myRTC.turnOffAlarm(1);
   myRTC.setA1Time(
