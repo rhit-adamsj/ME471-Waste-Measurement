@@ -2,6 +2,6 @@ Repository for RHIT ME471-Campus Waste Measurement Project
 
 -----------------------------------------------------------------------------------------------------------------------------------
 
-Jay Adams
-
 # Installation Instructions
+
+Open the "Programs" folder, then select "AutonomousWasteMeasurement.ino."
